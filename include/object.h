@@ -43,7 +43,13 @@ public: // Methods
 
 class PhysicsObject: public Object {
 public:
-    static bool areColliding(const PhysicsObject& a, const PhysicsObject& b);
+    struct CollisionResult {
+        bool collided;
+        float overlapX;
+        float overlapY;
+    };
+
+    static CollisionResult checkCollision(const PhysicsObject& a, const PhysicsObject& b);
 
 public:
     Vector2 velocity = {0};
@@ -74,7 +80,8 @@ public:
     Puck(const std::string& texturePath);
 
     bool isCollidingWithMapBoundsY(void) const;
-    void onCollideWithPlayer();
+    void
+    onCollideWithPlayer(const PlayerCharacter& player, PhysicsObject::CollisionResult collision);
     void onCollideWithMapBounds();
 };
 

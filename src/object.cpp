@@ -63,11 +63,12 @@ void Object::markForDeletion(void) {
 
 // PhysicsObject implementation
 
-bool PhysicsObject::areColliding(const PhysicsObject& a, const PhysicsObject& b) {
-    float xDistance = fabs(a.position.x - b.position.x) - ((a.size.x + b.size.x) / 2.0f);
-    float yDistance = fabs(a.position.y - b.position.y) - ((a.size.y + b.size.y) / 2.0f);
+PhysicsObject::CollisionResult
+PhysicsObject::checkCollision(const PhysicsObject& a, const PhysicsObject& b) {
+    float overlapX = ((a.size.x + b.size.x) / 2.0f) - fabs(a.position.x - b.position.x);
+    float overlapY = ((a.size.y + b.size.y) / 2.0f) - fabs(a.position.y - b.position.y);
 
-    return xDistance < 0.0f && yDistance < 0.0f;
+    return PhysicsObject::CollisionResult {overlapX > 0.0f && overlapY > 0.0f, overlapX, overlapY};
 }
 
 PhysicsObject::PhysicsObject(const std::string& texturePath) : Object(texturePath) {}
@@ -113,8 +114,31 @@ bool Puck::isCollidingWithMapBoundsY(void) const {
     );
 }
 
-// TODO: Add an epsilon vector?
-void Puck::onCollideWithPlayer() {
+void Puck::onCollideWithPlayer(
+    const PlayerCharacter& player,
+    PhysicsObject::CollisionResult collision
+) {
+    // In addition to the snapping back with overlap, when
+    // we collide with the top or bottom of the player,
+    // we have to reverse the y velocity or we'll clip
+    if (collision.overlapY < collision.overlapX) {
+        if (this->position.y < player.position.y) {
+            this->position.y -= collision.overlapY;
+        } else {
+            this->position.y += collision.overlapY;
+        }
+
+        this->velocity.y *= -1;
+    } else {
+        if (this->position.x < player.position.x) {
+            this->position.x -= collision.overlapX;
+        } else {
+            this->position.x += collision.overlapX;
+        }
+    }
+
+    // Always reverse x velocity, so even if the puck hits a
+    // player at the top, it'll count as a successful block
     this->velocity.x *= -1;
 }
 

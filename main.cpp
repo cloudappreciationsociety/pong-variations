@@ -37,6 +37,9 @@ PlayerCharacter* gRedPlayer = nullptr;
 PlayerCharacter* gBluePlayer = nullptr;
 Object* gRinkBg = nullptr;
 
+// Displayed next to blue's score when blue is controlled by AI
+Object* gAiIcon = nullptr;
+
 Music gBackgroundMusic;
 
 uint32_t gRedScore = 0;
@@ -48,14 +51,14 @@ std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
 
 uint32_t gPuckCount = 0;
 
-void spawnPuck() {
+void spawnPuck(void) {
     auto puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
     puck->size = {50.0f, 50.0f};
 
     float speed = (450.0f * distribution(generator)) + 450.0f;
 
     float positionY =
-        Constants::MAP_RECT.y + (Constants::MAP_RECT.height * distribution(generator));
+        Constants::MAP_RECT.y + (Constants::MAP_RECT.height / 2.0f * distribution(generator));
 
     float angle = (120.0f * distribution(generator) - 60.0f) * PI / 180.0f;
     if (distribution(generator) > 0.5f) {
@@ -70,6 +73,20 @@ void spawnPuck() {
     ++gPuckCount;
 }
 
+void runAI(PlayerCharacter& character) {
+    float nowSeconds = static_cast<float>(GetTime());
+
+    if (character.moveDirection.y == 0.0f) {
+        character.moveDirection.y = 1.0f;
+    }
+
+    if (character.position.y >= 750.0f) {
+        character.moveDirection.y = -1.0f;
+    } else if (character.position.y <= 200.0f) {
+        character.moveDirection.y = 1.0f;
+    }
+}
+
 void initialize(void) {
     InitWindow(Constants::SCREEN_WIDTH, Constants::SCREEN_HEIGHT, "Pong");
     InitAudioDevice();
@@ -77,21 +94,28 @@ void initialize(void) {
     SetTargetFPS(Constants::TARGET_FPS);
 
     auto rinkBg = std::unique_ptr<Object>(new Object("assets/textures/rink.png"));
+    auto aiIcon = std::unique_ptr<Object>(new Object("assets/textures/ai.png"));
     auto red =
         std::unique_ptr<PlayerCharacter>(new PlayerCharacter("assets/textures/red-player.png"));
     auto blue =
         std::unique_ptr<PlayerCharacter>(new PlayerCharacter("assets/textures/blue-player.png"));
 
     gRinkBg = rinkBg.get();
+    gAiIcon = aiIcon.get();
     gRedPlayer = red.get();
     gBluePlayer = blue.get();
 
     gObjects.emplace(rinkBg->id, std::move(rinkBg));
+    gObjects.emplace(aiIcon->id, std::move(aiIcon));
     gObjects.emplace(red->id, std::move(red));
     gObjects.emplace(blue->id, std::move(blue));
 
     gRinkBg->position.y = Constants::SCREEN_CENTER.y + Constants::MAP_RECT.y / 2.0f;
     gRinkBg->size = {2.5f * gRinkBg->size.x, Constants::MAP_RECT.height};
+
+    gAiIcon->size = {50.0f, 50.0f};
+    gAiIcon->position = {1500.0f, 50.0f};
+    gAiIcon->shouldRender = false;
 
     gRedPlayer->position.x = Constants::RED_GOAL_X;
     gBluePlayer->position.x = Constants::BLUE_GOAL_X;
@@ -133,7 +157,7 @@ void processInput(void) {
             gBluePlayer->moveDirection.y = 1.0f;
         }
     } else {
-        // Run some AI
+        runAI(*gBluePlayer);
     }
 
     if (IsKeyDown(KEY_Q) || WindowShouldClose()) {
@@ -158,6 +182,8 @@ void update(void) {
             ++it;
         }
     }
+
+    gAiIcon->shouldRender = gGameConfig == GameConfig::SINGLEPLAYER;
 
     // Movement
     for (auto& pair : gObjects) {
@@ -184,11 +210,17 @@ void update(void) {
             continue;
         }
 
-        if (PhysicsObject::areColliding(*puck, *gRedPlayer)
-            || PhysicsObject::areColliding(*puck, *gBluePlayer)) {
-            puck->onCollideWithPlayer();
-        } else if (puck->isCollidingWithMapBoundsY()) {
+        if (puck->isCollidingWithMapBoundsY()) {
             puck->onCollideWithMapBounds();
+        } else {
+            auto redResult = PhysicsObject::checkCollision(*puck, *gRedPlayer);
+            auto blueResult = PhysicsObject::checkCollision(*puck, *gBluePlayer);
+
+            if (redResult.collided) {
+                puck->onCollideWithPlayer(*gRedPlayer, redResult);
+            } else if (blueResult.collided) {
+                puck->onCollideWithPlayer(*gBluePlayer, blueResult);
+            }
         }
     }
 
@@ -212,7 +244,18 @@ void render(void) {
         pair.second->render();
     }
 
-    // DrawText(TextFormat("Red: %08i", gRedScore), 200, 80, 20, RED);
+    int32_t fontSize = 32;
+
+    DrawText(TextFormat("%03i", gRedScore), Constants::UI_SCORE_X_OFFSET, 40, fontSize, RED);
+
+    int32_t textWidth = MeasureText(TextFormat("%03i", gBlueScore), fontSize);
+    DrawText(
+        TextFormat("%03i", gBlueScore),
+        Constants::SCREEN_WIDTH - Constants::UI_SCORE_X_OFFSET - textWidth,
+        40,
+        fontSize,
+        BLUE
+    );
 
     EndDrawing();
 }

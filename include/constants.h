@@ -33,6 +33,8 @@ constexpr static float GOAL_X_OFFSET = 100.0f;
 constexpr float RED_GOAL_X = GOAL_X_OFFSET;
 constexpr float BLUE_GOAL_X = SCREEN_WIDTH - GOAL_X_OFFSET;
 
+constexpr uint32_t UI_SCORE_X_OFFSET = 250.0f;
+
 } // namespace Constants
 
 #endif
