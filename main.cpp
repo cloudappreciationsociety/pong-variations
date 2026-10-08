@@ -16,6 +16,7 @@
 #include "constants.h"
 #include "lib.h"
 #include "object.h"
+#include "ui.h"
 
 enum class GameConfig { SINGLEPLAYER, MULTIPLAYER };
 enum class GameStatus { IN_MENU, STARTING, IN_PROGRESS, ENDED };
@@ -24,7 +25,7 @@ enum class GameStatus { IN_MENU, STARTING, IN_PROGRESS, ENDED };
 // App-level globals
 // =============================================================================
 AppStatus gAppStatus = AppStatus::RUNNING;
-GameStatus gGameStatus = GameStatus::STARTING;
+GameStatus gGameStatus = GameStatus::IN_MENU;
 GameConfig gGameConfig = GameConfig::MULTIPLAYER;
 
 float gPreviousTimestampSec = 0.0f;
@@ -44,6 +45,7 @@ Object* gRinkBg = nullptr;
 // Displayed next to blue's score when blue is controlled by AI
 Object* gAiIcon = nullptr;
 
+Music gMenuMusic;
 Music gRoundMusic;
 
 float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
@@ -55,6 +57,9 @@ std::mt19937 generator(randomDevice());
 std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
 
 uint32_t gPuckCount = 0;
+
+TextButton gBackToMenuButton;
+TextButton gPlayButton;
 
 void spawnPuck(void) {
     auto puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
@@ -106,6 +111,7 @@ void initialize(void) {
 
     SetTargetFPS(constants::TARGET_FPS);
 
+    // Game objects and textured backgrounds
     auto rinkBg = std::unique_ptr<Object>(new Object("assets/textures/rink.png"));
     auto aiIcon = std::unique_ptr<Object>(new Object("assets/textures/ai.png"));
     auto red =
@@ -136,6 +142,19 @@ void initialize(void) {
     // Background music
     gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
     SetMusicVolume(gRoundMusic, 0.33f);
+
+    // UI elements
+    gBackToMenuButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
+    gBackToMenuButton.size = {200.0f, 100.0f};
+    gBackToMenuButton.backgroundColor = DARKGREEN;
+    gBackToMenuButton.hoverColor = GREEN;
+    gBackToMenuButton.text = "To Menu";
+
+    gPlayButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
+    gPlayButton.size = {200.0f, 100.0f};
+    gPlayButton.backgroundColor = DARKGREEN;
+    gPlayButton.hoverColor = GREEN;
+    gPlayButton.text = "PLAY";
 }
 
 void processInput(void) {
@@ -143,7 +162,10 @@ void processInput(void) {
 
     switch (gGameStatus) {
         case (GameStatus::IN_MENU): {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {}
+            if (gPlayButton.leftClicked()) {
+                gGameStatus = GameStatus::STARTING;
+                gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
+            }
 
             break;
         }
@@ -185,7 +207,9 @@ void processInput(void) {
             break;
         }
         case (GameStatus::ENDED): {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {}
+            if (gBackToMenuButton.leftClicked()) {
+                gGameStatus = GameStatus::IN_MENU;
+            }
 
             break;
         }
@@ -199,6 +223,9 @@ void processInput(void) {
 }
 
 void updateGameStarting(float deltaTime) {
+    gRedScore = 0;
+    gBlueScore = 0;
+
     gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
 
     if (gRoundCountdown == 0.0f) {
@@ -213,6 +240,10 @@ void updateGameInProgress(float deltaTime) {
     gRoundElapsedTime = static_cast<float>(GetTime()) - gRoundStartTime;
 
     gAiIcon->shouldRender = gGameConfig == GameConfig::SINGLEPLAYER;
+
+    for (auto& pair : gObjects) {
+        pair.second->update(deltaTime);
+    }
 
     // Collisions
     for (auto& pair : gObjects) {
@@ -255,6 +286,7 @@ void updateGameInProgress(float deltaTime) {
     UpdateMusicStream(gRoundMusic);
 
     if (gRoundElapsedTime >= constants::ROUND_MAX_TIME_SEC) {
+        StopMusicStream(gRoundMusic);
         gGameStatus = GameStatus::ENDED;
     }
 }
@@ -273,10 +305,6 @@ void update(void) {
         } else {
             ++it;
         }
-    }
-
-    for (auto& pair : gObjects) {
-        pair.second->update(deltaTime);
     }
 
     switch (gGameStatus) {
@@ -314,58 +342,47 @@ void render(void) {
 
     switch (gGameStatus) {
         case (GameStatus::IN_MENU): {
+            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, WHITE);
+            gPlayButton.render();
+
             break;
         }
         case (GameStatus::STARTING): {
-            DrawRectangle(
-                0,
-                0,
-                constants::SCREEN_WIDTH,
-                constants::SCREEN_HEIGHT,
-                constants::BLACK_TINT
-            );
-
-            DrawText(
+            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, constants::BLACK_TINT);
+            drawText(
                 TextFormat(
                     "Match begins in %i seconds...",
                     static_cast<int32_t>(std::ceil(gRoundCountdown))
                 ),
-                100,
-                100,
-                40,
+                constants::SCREEN_CENTER,
+                constants::ui::HEADER_FONT_SIZE,
                 WHITE
             );
 
             break;
         }
         case (GameStatus::IN_PROGRESS): {
-            DrawText(
+            drawText(
                 TextFormat("%03i", gRedScore),
-                constants::ui::SCORE_X_OFFSET,
-                constants::ui::SCORE_Y_POS,
+                {constants::ui::SCORE_X_OFFSET, constants::ui::SCORE_Y_POS},
                 constants::ui::FONT_SIZE,
                 RED
             );
 
-            const char* blueScoreText = TextFormat("%03i", gBlueScore);
-            int32_t textWidth = MeasureText(blueScoreText, constants::ui::FONT_SIZE);
-            DrawText(
-                blueScoreText,
-                constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET - textWidth,
-                constants::ui::SCORE_Y_POS,
+            drawText(
+                TextFormat("%03i", gBlueScore),
+                {constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET,
+                 constants::ui::SCORE_Y_POS},
                 constants::ui::FONT_SIZE,
                 BLUE
             );
 
-            const char* roundTimeText = TextFormat(
-                "%03i",
-                static_cast<int>(std::ceil(constants::ROUND_MAX_TIME_SEC - gRoundElapsedTime))
-            );
-            textWidth = MeasureText(roundTimeText, constants::ui::HEADER_FONT_SIZE);
-            DrawText(
-                roundTimeText,
-                constants::SCREEN_WIDTH / 2 - textWidth / 2,
-                constants::ui::SCORE_Y_POS / 2,
+            drawText(
+                TextFormat(
+                    "%03i",
+                    static_cast<int>(std::ceil(constants::ROUND_MAX_TIME_SEC - gRoundElapsedTime))
+                ),
+                {constants::SCREEN_CENTER.x, constants::ui::SCORE_Y_POS},
                 constants::ui::HEADER_FONT_SIZE,
                 WHITE
             );
@@ -373,14 +390,7 @@ void render(void) {
             break;
         }
         case (GameStatus::ENDED): {
-            // Tint the screen black
-            DrawRectangle(
-                0,
-                0,
-                constants::SCREEN_WIDTH,
-                constants::SCREEN_HEIGHT,
-                constants::BLACK_TINT
-            );
+            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, constants::BLACK_TINT);
 
             const char* roundOutcomeText;
             Color textColor = WHITE;
@@ -394,14 +404,16 @@ void render(void) {
                 roundOutcomeText = "Tie! Everyone's a loser!";
             }
 
-            int32_t textWidth = MeasureText(roundOutcomeText, constants::ui::HEADER_FONT_SIZE);
-            DrawText(
+            drawText(
                 roundOutcomeText,
-                constants::SCREEN_WIDTH / 2 - textWidth / 2,
-                120,
+                constants::SCREEN_CENTER,
                 constants::ui::HEADER_FONT_SIZE,
                 textColor
             );
+
+            gBackToMenuButton.render();
+
+            break;
         }
         default:
             break;
