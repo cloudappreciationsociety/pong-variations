@@ -41,7 +41,9 @@ std::map<uint32_t, std::unique_ptr<Object>> gObjects;
 
 PlayerCharacter* gRedPlayer = nullptr;
 PlayerCharacter* gBluePlayer = nullptr;
+
 Object* gRinkBg = nullptr;
+Object* gMenuBg = nullptr;
 
 // Displayed next to blue's score when blue is controlled by AI
 Object* gAiIcon = nullptr;
@@ -53,8 +55,8 @@ Music gRoundMusic;
 Sound gHitSound;
 
 float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
-uint32_t gRedScore = 0;
-uint32_t gBlueScore = 0;
+int32_t gRedScore = 0;
+int32_t gBlueScore = 0;
 
 std::random_device randomDevice;
 std::mt19937 generator(randomDevice());
@@ -65,6 +67,7 @@ uint32_t gTotalPuckCount = 1;
 
 TextButton gBackToMenuButton;
 TextButton gPlayButton;
+TextButton gQuitButton;
 
 void spawnPuck(void) {
     auto puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
@@ -104,9 +107,34 @@ void runAI(PlayerCharacter& character) {
     float loseRatio = gRedScore / std::max(static_cast<float>(gBlueScore), 1.0f);
 
     if (loseRatio >= 2.0f) {
-        character.moveSpeed = PlayerCharacter::BASE_MOVE_SPEED * loseRatio;
+        character.moveSpeed = PlayerCharacter::BASE_MOVE_SPEED * std::min(loseRatio, 5.0f);
     } else {
         character.moveSpeed = PlayerCharacter::BASE_MOVE_SPEED;
+    }
+}
+
+void resetGame(void) {
+    gRedScore = 0;
+    gBlueScore = 0;
+    gTotalPuckCount = 1;
+    gGameConfig = GameConfig::MULTIPLAYER;
+    gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
+
+    gRedPlayer->position = {constants::RED_GOAL_X, constants::SCREEN_CENTER.y};
+    gBluePlayer->position = {constants::BLUE_GOAL_X, constants::SCREEN_CENTER.y};
+
+    // Delete all pucks
+    if (gCurrentPuckCount > 0) {
+        for (auto& pair : gObjects) {
+            Puck* puck = dynamic_cast<Puck*>(pair.second.get());
+            if (!puck) {
+                continue;
+            }
+
+            puck->markForDeletion();
+        }
+
+        gCurrentPuckCount = 0;
     }
 }
 
@@ -116,30 +144,32 @@ void initialize(void) {
 
     SetTargetFPS(constants::TARGET_FPS);
 
-    // Game objects and textured backgrounds
-    auto rinkBg = std::unique_ptr<Object>(new Object("assets/textures/rink.png"));
-    auto aiIcon = std::unique_ptr<Object>(new Object("assets/textures/ai.png"));
-    auto puckCountBgIcon = std::unique_ptr<Object>(new Object("assets/textures/puck.png"));
-    auto red =
-        std::unique_ptr<PlayerCharacter>(new PlayerCharacter("assets/textures/red-player.png"));
-    auto blue =
-        std::unique_ptr<PlayerCharacter>(new PlayerCharacter("assets/textures/blue-player.png"));
+// Handy macro to initialize the unique pointer, link a global variable to it,
+// and add the pointer to the global object list
+#define INIT_OBJECT(className, gVar, texturePath) \
+    do { \
+        auto ptr = std::unique_ptr<className>(new (className)((texturePath))); \
+        (gVar) = ptr.get(); \
+        gObjects.emplace((gVar)->id, std::move(ptr)); \
+    } while (0)
 
-    gRinkBg = rinkBg.get();
-    gAiIcon = aiIcon.get();
-    gPuckCountBgIcon = puckCountBgIcon.get();
-    gRedPlayer = red.get();
-    gBluePlayer = blue.get();
+    INIT_OBJECT(Object, gRinkBg, "assets/textures/rink.png");
+    INIT_OBJECT(Object, gAiIcon, "assets/textures/ai.png");
+    INIT_OBJECT(Object, gPuckCountBgIcon, "assets/textures/puck.png");
+    INIT_OBJECT(PlayerCharacter, gRedPlayer, "assets/textures/red-player.png");
+    INIT_OBJECT(PlayerCharacter, gBluePlayer, "assets/textures/blue-player.png");
+    INIT_OBJECT(Object, gMenuBg, "assets/textures/menu-bg.jpg");
 
-    gObjects.emplace(rinkBg->id, std::move(rinkBg));
-    gObjects.emplace(aiIcon->id, std::move(aiIcon));
-    gObjects.emplace(puckCountBgIcon->id, std::move(puckCountBgIcon));
-    gObjects.emplace(red->id, std::move(red));
-    gObjects.emplace(blue->id, std::move(blue));
+#undef INIT_OBJECT
 
+    // Backgrounds
     gRinkBg->position.y = constants::SCREEN_CENTER.y + constants::MAP_RECT.y / 2.0f;
     gRinkBg->size = {2.5f * gRinkBg->size.x, constants::MAP_RECT.height};
 
+    gMenuBg->position = constants::SCREEN_CENTER;
+    gMenuBg->size = constants::SCREEN_SIZE;
+
+    // Icons
     gAiIcon->size = {50.0f, 50.0f};
     gAiIcon->position = {1500.0f, 50.0f};
     gAiIcon->shouldRender = false;
@@ -148,8 +178,8 @@ void initialize(void) {
     gPuckCountBgIcon->position = {constants::SCREEN_CENTER.x + 150.0f, 50.0f};
     gPuckCountBgIcon->shouldRender = false;
 
-    gRedPlayer->position.x = constants::RED_GOAL_X;
-    gBluePlayer->position.x = constants::BLUE_GOAL_X;
+    // Sets player positions, zeroes out scores, etc.
+    resetGame();
 
     // Audio
     gHitSound = LoadSound("assets/audio/hit1.wav");
@@ -159,16 +189,22 @@ void initialize(void) {
 
     // UI elements
     gBackToMenuButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
-    gBackToMenuButton.size = {200.0f, 100.0f};
+    gBackToMenuButton.size = {200.0f, 75.0f};
     gBackToMenuButton.backgroundColor = DARKGREEN;
     gBackToMenuButton.hoverColor = GREEN;
     gBackToMenuButton.text = "To Menu";
 
     gPlayButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
-    gPlayButton.size = {200.0f, 100.0f};
+    gPlayButton.size = {200.0f, 75.0f};
     gPlayButton.backgroundColor = DARKGREEN;
     gPlayButton.hoverColor = GREEN;
     gPlayButton.text = "PLAY";
+
+    gQuitButton.position = {constants::SCREEN_CENTER.x, 1.6f * constants::SCREEN_CENTER.y};
+    gQuitButton.size = {200.0f, 75.0f};
+    gQuitButton.backgroundColor = RED;
+    gQuitButton.hoverColor = PINK;
+    gQuitButton.text = "QUIT";
 }
 
 void processInput(void) {
@@ -177,14 +213,18 @@ void processInput(void) {
     switch (gGameStatus) {
         case (GameStatus::IN_MENU): {
             if (gPlayButton.leftClicked()) {
+                resetGame();
                 gGameStatus = GameStatus::STARTING;
-                gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
+            }
+
+            if (gQuitButton.leftClicked()) {
+                gAppStatus = AppStatus::TERMINATED;
             }
 
             break;
         }
         case (GameStatus::STARTING): {
-            // No inputs
+            // No inputs possible
             break;
         }
         case (GameStatus::IN_PROGRESS): {
@@ -230,7 +270,12 @@ void processInput(void) {
         }
         case (GameStatus::ENDED): {
             if (gBackToMenuButton.leftClicked()) {
+                resetGame();
                 gGameStatus = GameStatus::IN_MENU;
+            }
+
+            if (gQuitButton.leftClicked()) {
+                gAppStatus = AppStatus::TERMINATED;
             }
 
             break;
@@ -245,25 +290,7 @@ void processInput(void) {
 }
 
 void updateGameStarting(float deltaTime) {
-    gRedScore = 0;
-    gBlueScore = 0;
-    gTotalPuckCount = 1;
-    gGameConfig = GameConfig::MULTIPLAYER;
-
     gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
-
-    if (gCurrentPuckCount > 0) {
-        for (auto& pair : gObjects) {
-            Puck* puck = dynamic_cast<Puck*>(pair.second.get());
-            if (!puck) {
-                continue;
-            }
-
-            puck->markForDeletion();
-        }
-
-        gCurrentPuckCount = 0;
-    }
 
     if (!IsMusicStreamPlaying(gRoundMusic)) {
         PlayMusicStream(gRoundMusic);
@@ -344,6 +371,7 @@ void update(void) {
     gAiIcon->shouldRender =
         (gGameStatus == GameStatus::IN_PROGRESS) && (gGameConfig == GameConfig::SINGLEPLAYER);
     gPuckCountBgIcon->shouldRender = gGameStatus == GameStatus::IN_PROGRESS;
+    gMenuBg->shouldRender = (gGameStatus == GameStatus::IN_MENU);
 
     // Delete objects marked for deletion
     // Ugly C++11 iterate-and-erase stuff
@@ -375,6 +403,28 @@ void update(void) {
     }
 }
 
+void renderTintedOverlay(void) {
+    drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, constants::BLACK_TINT);
+}
+
+void renderScores(void) {
+    // Red score
+    drawText(
+        TextFormat("%03i", gRedScore),
+        {constants::ui::SCORE_X_OFFSET, constants::ui::SCORE_Y_POS},
+        constants::ui::FONT_SIZE,
+        RED
+    );
+
+    // Blue score
+    drawText(
+        TextFormat("%03i", gBlueScore),
+        {constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET, constants::ui::SCORE_Y_POS},
+        constants::ui::FONT_SIZE,
+        BLUE
+    );
+}
+
 void render(void) {
     BeginDrawing();
 
@@ -390,13 +440,13 @@ void render(void) {
 
     switch (gGameStatus) {
         case (GameStatus::IN_MENU): {
-            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, WHITE);
             gPlayButton.render();
+            gQuitButton.render();
 
             break;
         }
         case (GameStatus::STARTING): {
-            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, constants::BLACK_TINT);
+            renderTintedOverlay();
             drawText(
                 TextFormat(
                     "Match begins in %i seconds...",
@@ -410,22 +460,7 @@ void render(void) {
             break;
         }
         case (GameStatus::IN_PROGRESS): {
-            // Red score
-            drawText(
-                TextFormat("%03i", gRedScore),
-                {constants::ui::SCORE_X_OFFSET, constants::ui::SCORE_Y_POS},
-                constants::ui::FONT_SIZE,
-                RED
-            );
-
-            // Blue score
-            drawText(
-                TextFormat("%03i", gBlueScore),
-                {constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET,
-                 constants::ui::SCORE_Y_POS},
-                constants::ui::FONT_SIZE,
-                BLUE
-            );
+            renderScores();
 
             // Round timer
             drawText(
@@ -449,7 +484,7 @@ void render(void) {
             break;
         }
         case (GameStatus::ENDED): {
-            drawRectangle(constants::SCREEN_CENTER, constants::SCREEN_SIZE, constants::BLACK_TINT);
+            renderTintedOverlay();
 
             const char* roundOutcomeText;
             Color textColor = WHITE;
@@ -470,7 +505,10 @@ void render(void) {
                 textColor
             );
 
+            renderScores();
+
             gBackToMenuButton.render();
+            gQuitButton.render();
 
             break;
         }
