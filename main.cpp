@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <vector>
 
 #include "constants.h"
 #include "lib.h"
@@ -44,9 +45,12 @@ Object* gRinkBg = nullptr;
 
 // Displayed next to blue's score when blue is controlled by AI
 Object* gAiIcon = nullptr;
+// Displayed next to round timer
+Object* gPuckCountBgIcon = nullptr;
 
 Music gMenuMusic;
 Music gRoundMusic;
+Sound gHitSound;
 
 float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
 uint32_t gRedScore = 0;
@@ -54,9 +58,10 @@ uint32_t gBlueScore = 0;
 
 std::random_device randomDevice;
 std::mt19937 generator(randomDevice());
-std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+std::uniform_real_distribution<float> puck_rng(0.0f, 1.0f);
 
-uint32_t gPuckCount = 0;
+uint32_t gCurrentPuckCount = 0;
+uint32_t gTotalPuckCount = 1;
 
 TextButton gBackToMenuButton;
 TextButton gPlayButton;
@@ -65,13 +70,13 @@ void spawnPuck(void) {
     auto puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
     puck->size = {50.0f, 50.0f};
 
-    float speed = (450.0f * distribution(generator)) + 450.0f;
+    float speed = (450.0f * puck_rng(generator)) + 450.0f;
 
     float positionY =
-        constants::MAP_RECT.y + (constants::MAP_RECT.height / 2.0f * distribution(generator));
+        constants::MAP_RECT.y + (constants::MAP_RECT.height / 2.0f * puck_rng(generator));
 
-    float angle = (120.0f * distribution(generator) - 60.0f) * PI / 180.0f;
-    if (distribution(generator) > 0.5f) {
+    float angle = (120.0f * puck_rng(generator) - 60.0f) * PI / 180.0f;
+    if (puck_rng(generator) > 0.5f) {
         angle += PI;
     }
 
@@ -80,7 +85,7 @@ void spawnPuck(void) {
     puck->velocity.y = speed * std::sin(angle);
 
     gObjects.emplace(puck->id, std::move(puck));
-    ++gPuckCount;
+    ++gCurrentPuckCount;
 }
 
 void runAI(PlayerCharacter& character) {
@@ -114,6 +119,7 @@ void initialize(void) {
     // Game objects and textured backgrounds
     auto rinkBg = std::unique_ptr<Object>(new Object("assets/textures/rink.png"));
     auto aiIcon = std::unique_ptr<Object>(new Object("assets/textures/ai.png"));
+    auto puckCountBgIcon = std::unique_ptr<Object>(new Object("assets/textures/puck.png"));
     auto red =
         std::unique_ptr<PlayerCharacter>(new PlayerCharacter("assets/textures/red-player.png"));
     auto blue =
@@ -121,11 +127,13 @@ void initialize(void) {
 
     gRinkBg = rinkBg.get();
     gAiIcon = aiIcon.get();
+    gPuckCountBgIcon = puckCountBgIcon.get();
     gRedPlayer = red.get();
     gBluePlayer = blue.get();
 
     gObjects.emplace(rinkBg->id, std::move(rinkBg));
     gObjects.emplace(aiIcon->id, std::move(aiIcon));
+    gObjects.emplace(puckCountBgIcon->id, std::move(puckCountBgIcon));
     gObjects.emplace(red->id, std::move(red));
     gObjects.emplace(blue->id, std::move(blue));
 
@@ -136,10 +144,16 @@ void initialize(void) {
     gAiIcon->position = {1500.0f, 50.0f};
     gAiIcon->shouldRender = false;
 
+    gPuckCountBgIcon->size = {50.0f, 50.0f};
+    gPuckCountBgIcon->position = {constants::SCREEN_CENTER.x + 150.0f, 50.0f};
+    gPuckCountBgIcon->shouldRender = false;
+
     gRedPlayer->position.x = constants::RED_GOAL_X;
     gBluePlayer->position.x = constants::BLUE_GOAL_X;
 
-    // Background music
+    // Audio
+    gHitSound = LoadSound("assets/audio/hit1.wav");
+
     gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
     SetMusicVolume(gRoundMusic, 0.33f);
 
@@ -204,6 +218,14 @@ void processInput(void) {
                 runAI(*gBluePlayer);
             }
 
+            // Keys nine to one to spawn nine to one pucks
+            for (int32_t i = KEY_NINE; i >= KEY_ONE; --i) {
+                if (IsKeyDown(i)) {
+                    gTotalPuckCount = i + 1 - KEY_ONE;
+                    break;
+                }
+            }
+
             break;
         }
         case (GameStatus::ENDED): {
@@ -225,21 +247,45 @@ void processInput(void) {
 void updateGameStarting(float deltaTime) {
     gRedScore = 0;
     gBlueScore = 0;
+    gTotalPuckCount = 1;
+    gGameConfig = GameConfig::MULTIPLAYER;
 
     gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
+
+    if (gCurrentPuckCount > 0) {
+        for (auto& pair : gObjects) {
+            Puck* puck = dynamic_cast<Puck*>(pair.second.get());
+            if (!puck) {
+                continue;
+            }
+
+            puck->markForDeletion();
+        }
+
+        gCurrentPuckCount = 0;
+    }
+
+    if (!IsMusicStreamPlaying(gRoundMusic)) {
+        PlayMusicStream(gRoundMusic);
+    }
 
     if (gRoundCountdown == 0.0f) {
         gGameStatus = GameStatus::IN_PROGRESS;
         gRoundStartTime = static_cast<float>(GetTime());
-
-        PlayMusicStream(gRoundMusic);
     }
+
+    UpdateMusicStream(gRoundMusic);
 }
 
 void updateGameInProgress(float deltaTime) {
     gRoundElapsedTime = static_cast<float>(GetTime()) - gRoundStartTime;
 
-    gAiIcon->shouldRender = gGameConfig == GameConfig::SINGLEPLAYER;
+    // Delete pucks over our limit
+
+    // Spawn pucks until we reach the limit
+    while (gCurrentPuckCount < gTotalPuckCount) {
+        spawnPuck();
+    }
 
     for (auto& pair : gObjects) {
         pair.second->update(deltaTime);
@@ -256,12 +302,12 @@ void updateGameInProgress(float deltaTime) {
         if (puck->position.x <= constants::RED_GOAL_X) {
             ++gBlueScore;
             puck->markForDeletion();
-            --gPuckCount;
+            --gCurrentPuckCount;
             continue;
         } else if (puck->position.x >= constants::BLUE_GOAL_X) {
             ++gRedScore;
             puck->markForDeletion();
-            --gPuckCount;
+            --gCurrentPuckCount;
             continue;
         }
 
@@ -273,14 +319,12 @@ void updateGameInProgress(float deltaTime) {
 
             if (redResult.collided) {
                 puck->onCollideWithPlayer(*gRedPlayer, redResult);
+                PlaySound(gHitSound);
             } else if (blueResult.collided) {
                 puck->onCollideWithPlayer(*gBluePlayer, blueResult);
+                PlaySound(gHitSound);
             }
         }
-    }
-
-    if (gPuckCount == 0) {
-        spawnPuck();
     }
 
     UpdateMusicStream(gRoundMusic);
@@ -296,6 +340,10 @@ void update(void) {
     float nowSec = static_cast<float>(GetTime());
     float deltaTime = nowSec - gPreviousTimestampSec;
     gPreviousTimestampSec = nowSec;
+
+    gAiIcon->shouldRender =
+        (gGameStatus == GameStatus::IN_PROGRESS) && (gGameConfig == GameConfig::SINGLEPLAYER);
+    gPuckCountBgIcon->shouldRender = gGameStatus == GameStatus::IN_PROGRESS;
 
     // Delete objects marked for deletion
     // Ugly C++11 iterate-and-erase stuff
@@ -362,6 +410,7 @@ void render(void) {
             break;
         }
         case (GameStatus::IN_PROGRESS): {
+            // Red score
             drawText(
                 TextFormat("%03i", gRedScore),
                 {constants::ui::SCORE_X_OFFSET, constants::ui::SCORE_Y_POS},
@@ -369,6 +418,7 @@ void render(void) {
                 RED
             );
 
+            // Blue score
             drawText(
                 TextFormat("%03i", gBlueScore),
                 {constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET,
@@ -377,6 +427,7 @@ void render(void) {
                 BLUE
             );
 
+            // Round timer
             drawText(
                 TextFormat(
                     "%03i",
@@ -384,6 +435,14 @@ void render(void) {
                 ),
                 {constants::SCREEN_CENTER.x, constants::ui::SCORE_Y_POS},
                 constants::ui::HEADER_FONT_SIZE,
+                WHITE
+            );
+
+            // Puck count
+            drawText(
+                TextFormat("%01i", gTotalPuckCount),
+                gPuckCountBgIcon->position,
+                constants::ui::FONT_SIZE,
                 WHITE
             );
 
@@ -425,6 +484,10 @@ void render(void) {
 void shutdown(void) {
     gObjects.clear();
 
+    UnloadSound(gHitSound);
+    UnloadMusicStream(gRoundMusic);
+
+    CloseAudioDevice();
     CloseWindow();
 }
 

@@ -118,30 +118,25 @@ void Puck::onCollideWithPlayer(
     const PlayerCharacter& player,
     PhysicsObject::CollisionResult collision
 ) {
-    // In addition to the snapping back with overlap, when
-    // we collide with the top or bottom of the player,
-    // we have to reverse the y velocity or we'll clip
+    // Hit the top or bottom of the player
     if (collision.overlapY < collision.overlapX) {
-        if (this->position.y < player.position.y) {
-            this->position.y -= collision.overlapY;
-        } else {
-            this->position.y += collision.overlapY;
-        }
+        float yDirection = (this->position.y < player.position.y) ? -1.0f : 1.0f;
+        this->position.y += yDirection * collision.overlapY;
+        this->velocity.y = yDirection * std::fabs(this->velocity.y);
 
-        this->velocity.y *= -1;
-    } else {
-        if (this->position.x < player.position.x) {
-            this->position.x -= collision.overlapX;
-        } else {
-            this->position.x += collision.overlapX;
-        }
+        // Use the player's position relative to the screen center instead of the puck
+        // because it could be possible that a puck collides with a player at their
+        // goal-facing half
+        float xDirection = (player.position.x < constants::SCREEN_CENTER.x) ? 1.0f : -1.0f;
+        this->velocity.x = xDirection * std::fabs(this->velocity.x);
+    } else { // Hit the front face of the player
+        float direction = (this->position.x < player.position.x) ? -1.0f : 1.0f;
+        this->position.x += direction * collision.overlapX;
+        this->velocity.x = direction * std::fabs(this->velocity.x);
     }
-
-    // Always reverse x velocity, so even if the puck hits a
-    // player at the top, it'll count as a successful block
-    this->velocity.x *= -1;
 }
 
 void Puck::onCollideWithMapBounds() {
-    this->velocity.y *= -1;
+    bool hitTop = this->position.y <= constants::MAP_RECT.y + this->size.y / 2.0f;
+    this->velocity.y = (hitTop ? 1.0f : -1.0f) * std::fabs(this->velocity.y);
 }
