@@ -44,6 +44,7 @@ PlayerCharacter* gBluePlayer = nullptr;
 
 Object* gRinkBg = nullptr;
 Object* gMenuBg = nullptr;
+Object* gLogo = nullptr;
 
 // Displayed next to blue's score when blue is controlled by AI
 Object* gAiIcon = nullptr;
@@ -159,6 +160,7 @@ void initialize(void) {
     INIT_OBJECT(PlayerCharacter, gRedPlayer, "assets/textures/red-player.png");
     INIT_OBJECT(PlayerCharacter, gBluePlayer, "assets/textures/blue-player.png");
     INIT_OBJECT(Object, gMenuBg, "assets/textures/menu-bg.jpg");
+    INIT_OBJECT(Object, gLogo, "assets/textures/logo.png");
 
 #undef INIT_OBJECT
 
@@ -168,6 +170,8 @@ void initialize(void) {
 
     gMenuBg->position = constants::SCREEN_CENTER;
     gMenuBg->size = constants::SCREEN_SIZE;
+
+    gLogo->position = {constants::SCREEN_CENTER.x, constants::SCREEN_CENTER.y - 100.0f};
 
     // Icons
     gAiIcon->size = {50.0f, 50.0f};
@@ -182,10 +186,13 @@ void initialize(void) {
     resetGame();
 
     // Audio
-    gHitSound = LoadSound("assets/audio/hit1.wav");
+    gMenuMusic = LoadMusicStream("assets/audio/fat-lip.mp3");
+    SetMusicVolume(gMenuMusic, 0.33f);
 
     gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
     SetMusicVolume(gRoundMusic, 0.33f);
+
+    gHitSound = LoadSound("assets/audio/hit1.wav");
 
     // UI elements
     gBackToMenuButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
@@ -289,7 +296,17 @@ void processInput(void) {
     }
 }
 
+void updateGameMenu(void) {
+    if (!IsMusicStreamPlaying(gMenuMusic)) {
+        PlayMusicStream(gMenuMusic);
+    }
+
+    UpdateMusicStream(gMenuMusic);
+}
+
 void updateGameStarting(float deltaTime) {
+    StopMusicStream(gMenuMusic);
+
     gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
 
     if (!IsMusicStreamPlaying(gRoundMusic)) {
@@ -372,6 +389,7 @@ void update(void) {
         (gGameStatus == GameStatus::IN_PROGRESS) && (gGameConfig == GameConfig::SINGLEPLAYER);
     gPuckCountBgIcon->shouldRender = gGameStatus == GameStatus::IN_PROGRESS;
     gMenuBg->shouldRender = (gGameStatus == GameStatus::IN_MENU);
+    gLogo->shouldRender = gMenuBg->shouldRender;
 
     // Delete objects marked for deletion
     // Ugly C++11 iterate-and-erase stuff
@@ -385,6 +403,7 @@ void update(void) {
 
     switch (gGameStatus) {
         case (GameStatus::IN_MENU): {
+            updateGameMenu();
             break;
         }
         case (GameStatus::STARTING): {
@@ -524,6 +543,7 @@ void shutdown(void) {
 
     UnloadSound(gHitSound);
     UnloadMusicStream(gRoundMusic);
+    UnloadMusicStream(gMenuMusic);
 
     CloseAudioDevice();
     CloseWindow();
