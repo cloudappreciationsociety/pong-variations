@@ -8,7 +8,7 @@
 uint32_t Object::idCounter = 0;
 
 Object::Object(const std::string& texturePath) :
-    position(Constants::SCREEN_CENTER),
+    position(constants::SCREEN_CENTER),
     id(Object::idCounter++) {
     this->texturePath = texturePath;
     this->texture = LoadTexture(this->texturePath.c_str());
@@ -76,14 +76,14 @@ PhysicsObject::PhysicsObject(const std::string& texturePath) : Object(texturePat
 void PhysicsObject::update(float deltaTime) {
     this->position.x = clamp(
         this->position.x + this->velocity.x * deltaTime,
-        Constants::MAP_RECT.x + this->size.x / 2.0f,
-        Constants::MAP_RECT.x + Constants::MAP_RECT.width - this->size.x / 2.0f
+        constants::MAP_RECT.x + this->size.x / 2.0f,
+        constants::MAP_RECT.x + constants::MAP_RECT.width - this->size.x / 2.0f
     );
 
     this->position.y = clamp(
         this->position.y + this->velocity.y * deltaTime,
-        Constants::MAP_RECT.y + this->size.y / 2.0f,
-        Constants::MAP_RECT.y + Constants::MAP_RECT.height - this->size.y / 2.0f
+        constants::MAP_RECT.y + this->size.y / 2.0f,
+        constants::MAP_RECT.y + constants::MAP_RECT.height - this->size.y / 2.0f
     );
 }
 
@@ -108,9 +108,9 @@ Puck::Puck(const std::string& texturePath) : PhysicsObject(texturePath) {}
 
 bool Puck::isCollidingWithMapBoundsY(void) const {
     return (
-        this->position.y <= Constants::MAP_RECT.y + this->size.y / 2.0f
+        this->position.y <= constants::MAP_RECT.y + this->size.y / 2.0f
         || this->position.y
-            >= Constants::MAP_RECT.y + Constants::MAP_RECT.height - this->size.y / 2.0f
+            >= constants::MAP_RECT.y + constants::MAP_RECT.height - this->size.y / 2.0f
     );
 }
 

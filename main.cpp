@@ -18,16 +18,20 @@
 #include "object.h"
 
 enum class GameConfig { SINGLEPLAYER, MULTIPLAYER };
+enum class GameStatus { IN_MENU, STARTING, IN_PROGRESS, ENDED };
 
 // =============================================================================
 // App-level globals
 // =============================================================================
 AppStatus gAppStatus = AppStatus::RUNNING;
-float gPreviousTimestampSec = 0.0f;
-float gGameStartTime = 0.0f;
-float gGameElapsedTime = 0.0f;
-Color gBackgroundColor = BLACK;
+GameStatus gGameStatus = GameStatus::STARTING;
 GameConfig gGameConfig = GameConfig::MULTIPLAYER;
+
+float gPreviousTimestampSec = 0.0f;
+float gRoundStartTime = 0.0f;
+float gRoundElapsedTime = 0.0f;
+
+Color gBackgroundColor = BLACK;
 
 // std::map over std::unordered_map to guarantee rendering order so BG renders
 // behind everything else
@@ -40,8 +44,9 @@ Object* gRinkBg = nullptr;
 // Displayed next to blue's score when blue is controlled by AI
 Object* gAiIcon = nullptr;
 
-Music gBackgroundMusic;
+Music gRoundMusic;
 
+float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
 uint32_t gRedScore = 0;
 uint32_t gBlueScore = 0;
 
@@ -58,7 +63,7 @@ void spawnPuck(void) {
     float speed = (450.0f * distribution(generator)) + 450.0f;
 
     float positionY =
-        Constants::MAP_RECT.y + (Constants::MAP_RECT.height / 2.0f * distribution(generator));
+        constants::MAP_RECT.y + (constants::MAP_RECT.height / 2.0f * distribution(generator));
 
     float angle = (120.0f * distribution(generator) - 60.0f) * PI / 180.0f;
     if (distribution(generator) > 0.5f) {
@@ -74,24 +79,32 @@ void spawnPuck(void) {
 }
 
 void runAI(PlayerCharacter& character) {
-    float nowSeconds = static_cast<float>(GetTime());
-
+    // Always keep moving
     if (character.moveDirection.y == 0.0f) {
         character.moveDirection.y = 1.0f;
     }
 
+    // Up-and-down motion
     if (character.position.y >= 750.0f) {
         character.moveDirection.y = -1.0f;
     } else if (character.position.y <= 200.0f) {
         character.moveDirection.y = 1.0f;
     }
+
+    float loseRatio = gRedScore / std::max(static_cast<float>(gBlueScore), 1.0f);
+
+    if (loseRatio >= 2.0f) {
+        character.moveSpeed = PlayerCharacter::BASE_MOVE_SPEED * loseRatio;
+    } else {
+        character.moveSpeed = PlayerCharacter::BASE_MOVE_SPEED;
+    }
 }
 
 void initialize(void) {
-    InitWindow(Constants::SCREEN_WIDTH, Constants::SCREEN_HEIGHT, "Pong");
+    InitWindow(constants::SCREEN_WIDTH, constants::SCREEN_HEIGHT, "Pong");
     InitAudioDevice();
 
-    SetTargetFPS(Constants::TARGET_FPS);
+    SetTargetFPS(constants::TARGET_FPS);
 
     auto rinkBg = std::unique_ptr<Object>(new Object("assets/textures/rink.png"));
     auto aiIcon = std::unique_ptr<Object>(new Object("assets/textures/ai.png"));
@@ -110,54 +123,74 @@ void initialize(void) {
     gObjects.emplace(red->id, std::move(red));
     gObjects.emplace(blue->id, std::move(blue));
 
-    gRinkBg->position.y = Constants::SCREEN_CENTER.y + Constants::MAP_RECT.y / 2.0f;
-    gRinkBg->size = {2.5f * gRinkBg->size.x, Constants::MAP_RECT.height};
+    gRinkBg->position.y = constants::SCREEN_CENTER.y + constants::MAP_RECT.y / 2.0f;
+    gRinkBg->size = {2.5f * gRinkBg->size.x, constants::MAP_RECT.height};
 
     gAiIcon->size = {50.0f, 50.0f};
     gAiIcon->position = {1500.0f, 50.0f};
     gAiIcon->shouldRender = false;
 
-    gRedPlayer->position.x = Constants::RED_GOAL_X;
-    gBluePlayer->position.x = Constants::BLUE_GOAL_X;
-
-    spawnPuck();
+    gRedPlayer->position.x = constants::RED_GOAL_X;
+    gBluePlayer->position.x = constants::BLUE_GOAL_X;
 
     // Background music
-    gBackgroundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
-    SetMusicVolume(gBackgroundMusic, 0.33f);
-    PlayMusicStream(gBackgroundMusic);
-
-    gGameStartTime = static_cast<float>(GetTime());
+    gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
+    SetMusicVolume(gRoundMusic, 0.33f);
 }
 
 void processInput(void) {
-    gRedPlayer->moveDirection = {0.0f, 0.0f};
+    Vector2 mousePosition = GetMousePosition();
 
-    if (IsKeyDown(KEY_W)) {
-        gRedPlayer->moveDirection.y = -1.0f;
-    } else if (IsKeyDown(KEY_S)) {
-        gRedPlayer->moveDirection.y = 1.0f;
-    }
+    switch (gGameStatus) {
+        case (GameStatus::IN_MENU): {
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {}
 
-    // Switch modes
-    if (IsKeyPressed(KEY_T)) {
-        if (gGameConfig == GameConfig::MULTIPLAYER) {
-            gGameConfig = GameConfig::SINGLEPLAYER;
-        } else {
-            gGameConfig = GameConfig::MULTIPLAYER;
+            break;
         }
-    }
-
-    if (gGameConfig == GameConfig::MULTIPLAYER) {
-        gBluePlayer->moveDirection = {0.0f, 0.0f};
-
-        if (IsKeyDown(KEY_UP)) {
-            gBluePlayer->moveDirection.y = -1.0f;
-        } else if (IsKeyDown(KEY_DOWN)) {
-            gBluePlayer->moveDirection.y = 1.0f;
+        case (GameStatus::STARTING): {
+            // No inputs
+            break;
         }
-    } else {
-        runAI(*gBluePlayer);
+        case (GameStatus::IN_PROGRESS): {
+            gRedPlayer->moveDirection = {0.0f, 0.0f};
+
+            if (IsKeyDown(KEY_W)) {
+                gRedPlayer->moveDirection.y = -1.0f;
+            } else if (IsKeyDown(KEY_S)) {
+                gRedPlayer->moveDirection.y = 1.0f;
+            }
+
+            // Switch modes
+            if (IsKeyPressed(KEY_T)) {
+                if (gGameConfig == GameConfig::MULTIPLAYER) {
+                    gGameConfig = GameConfig::SINGLEPLAYER;
+                } else {
+                    gGameConfig = GameConfig::MULTIPLAYER;
+                }
+            }
+
+            if (gGameConfig == GameConfig::MULTIPLAYER) {
+                gBluePlayer->moveDirection = {0.0f, 0.0f};
+                gBluePlayer->moveSpeed = PlayerCharacter::BASE_MOVE_SPEED;
+
+                if (IsKeyDown(KEY_UP)) {
+                    gBluePlayer->moveDirection.y = -1.0f;
+                } else if (IsKeyDown(KEY_DOWN)) {
+                    gBluePlayer->moveDirection.y = 1.0f;
+                }
+            } else {
+                runAI(*gBluePlayer);
+            }
+
+            break;
+        }
+        case (GameStatus::ENDED): {
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {}
+
+            break;
+        }
+        default:
+            break;
     }
 
     if (IsKeyDown(KEY_Q) || WindowShouldClose()) {
@@ -165,30 +198,21 @@ void processInput(void) {
     }
 }
 
-void update(void) {
-    // Compute delta time
-    float nowSec = static_cast<float>(GetTime());
-    float deltaTime = nowSec - gPreviousTimestampSec;
-    gPreviousTimestampSec = nowSec;
+void updateGameStarting(float deltaTime) {
+    gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
 
-    gGameElapsedTime = nowSec - gGameStartTime;
+    if (gRoundCountdown == 0.0f) {
+        gGameStatus = GameStatus::IN_PROGRESS;
+        gRoundStartTime = static_cast<float>(GetTime());
 
-    // Delete objects marked for deletion
-    // Ugly C++11 iterate-and-erase stuff
-    for (auto it = gObjects.begin(); it != gObjects.end();) {
-        if (it->second->shouldDelete) {
-            it = gObjects.erase(it);
-        } else {
-            ++it;
-        }
+        PlayMusicStream(gRoundMusic);
     }
+}
+
+void updateGameInProgress(float deltaTime) {
+    gRoundElapsedTime = static_cast<float>(GetTime()) - gRoundStartTime;
 
     gAiIcon->shouldRender = gGameConfig == GameConfig::SINGLEPLAYER;
-
-    // Movement
-    for (auto& pair : gObjects) {
-        pair.second->update(deltaTime);
-    }
 
     // Collisions
     for (auto& pair : gObjects) {
@@ -198,12 +222,12 @@ void update(void) {
         }
 
         // Score!
-        if (puck->position.x <= Constants::RED_GOAL_X) {
+        if (puck->position.x <= constants::RED_GOAL_X) {
             ++gBlueScore;
             puck->markForDeletion();
             --gPuckCount;
             continue;
-        } else if (puck->position.x >= Constants::BLUE_GOAL_X) {
+        } else if (puck->position.x >= constants::BLUE_GOAL_X) {
             ++gRedScore;
             puck->markForDeletion();
             --gPuckCount;
@@ -228,7 +252,51 @@ void update(void) {
         spawnPuck();
     }
 
-    UpdateMusicStream(gBackgroundMusic);
+    UpdateMusicStream(gRoundMusic);
+
+    if (gRoundElapsedTime >= constants::ROUND_MAX_TIME_SEC) {
+        gGameStatus = GameStatus::ENDED;
+    }
+}
+
+void update(void) {
+    // Compute delta time
+    float nowSec = static_cast<float>(GetTime());
+    float deltaTime = nowSec - gPreviousTimestampSec;
+    gPreviousTimestampSec = nowSec;
+
+    // Delete objects marked for deletion
+    // Ugly C++11 iterate-and-erase stuff
+    for (auto it = gObjects.begin(); it != gObjects.end();) {
+        if (it->second->shouldDelete) {
+            it = gObjects.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    for (auto& pair : gObjects) {
+        pair.second->update(deltaTime);
+    }
+
+    switch (gGameStatus) {
+        case (GameStatus::IN_MENU): {
+            break;
+        }
+        case (GameStatus::STARTING): {
+            updateGameStarting(deltaTime);
+            break;
+        }
+        case (GameStatus::IN_PROGRESS): {
+            updateGameInProgress(deltaTime);
+            break;
+        }
+        case (GameStatus::ENDED): {
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 void render(void) {
@@ -244,18 +312,100 @@ void render(void) {
         pair.second->render();
     }
 
-    int32_t fontSize = 32;
+    switch (gGameStatus) {
+        case (GameStatus::IN_MENU): {
+            break;
+        }
+        case (GameStatus::STARTING): {
+            DrawRectangle(
+                0,
+                0,
+                constants::SCREEN_WIDTH,
+                constants::SCREEN_HEIGHT,
+                constants::BLACK_TINT
+            );
 
-    DrawText(TextFormat("%03i", gRedScore), Constants::UI_SCORE_X_OFFSET, 40, fontSize, RED);
+            DrawText(
+                TextFormat(
+                    "Match begins in %i seconds...",
+                    static_cast<int32_t>(std::ceil(gRoundCountdown))
+                ),
+                100,
+                100,
+                40,
+                WHITE
+            );
 
-    int32_t textWidth = MeasureText(TextFormat("%03i", gBlueScore), fontSize);
-    DrawText(
-        TextFormat("%03i", gBlueScore),
-        Constants::SCREEN_WIDTH - Constants::UI_SCORE_X_OFFSET - textWidth,
-        40,
-        fontSize,
-        BLUE
-    );
+            break;
+        }
+        case (GameStatus::IN_PROGRESS): {
+            DrawText(
+                TextFormat("%03i", gRedScore),
+                constants::ui::SCORE_X_OFFSET,
+                constants::ui::SCORE_Y_POS,
+                constants::ui::FONT_SIZE,
+                RED
+            );
+
+            const char* blueScoreText = TextFormat("%03i", gBlueScore);
+            int32_t textWidth = MeasureText(blueScoreText, constants::ui::FONT_SIZE);
+            DrawText(
+                blueScoreText,
+                constants::SCREEN_WIDTH - constants::ui::SCORE_X_OFFSET - textWidth,
+                constants::ui::SCORE_Y_POS,
+                constants::ui::FONT_SIZE,
+                BLUE
+            );
+
+            const char* roundTimeText = TextFormat(
+                "%03i",
+                static_cast<int>(std::ceil(constants::ROUND_MAX_TIME_SEC - gRoundElapsedTime))
+            );
+            textWidth = MeasureText(roundTimeText, constants::ui::HEADER_FONT_SIZE);
+            DrawText(
+                roundTimeText,
+                constants::SCREEN_WIDTH / 2 - textWidth / 2,
+                constants::ui::SCORE_Y_POS / 2,
+                constants::ui::HEADER_FONT_SIZE,
+                WHITE
+            );
+
+            break;
+        }
+        case (GameStatus::ENDED): {
+            // Tint the screen black
+            DrawRectangle(
+                0,
+                0,
+                constants::SCREEN_WIDTH,
+                constants::SCREEN_HEIGHT,
+                constants::BLACK_TINT
+            );
+
+            const char* roundOutcomeText;
+            Color textColor = WHITE;
+            if (gRedScore > gBlueScore) {
+                roundOutcomeText = "Red wins!";
+                textColor = RED;
+            } else if (gBlueScore > gRedScore) {
+                roundOutcomeText = "Blue wins!";
+                textColor = BLUE;
+            } else {
+                roundOutcomeText = "Tie! Everyone's a loser!";
+            }
+
+            int32_t textWidth = MeasureText(roundOutcomeText, constants::ui::HEADER_FONT_SIZE);
+            DrawText(
+                roundOutcomeText,
+                constants::SCREEN_WIDTH / 2 - textWidth / 2,
+                120,
+                constants::ui::HEADER_FONT_SIZE,
+                textColor
+            );
+        }
+        default:
+            break;
+    }
 
     EndDrawing();
 }

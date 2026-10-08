@@ -61,7 +61,7 @@ public:
 };
 
 class PlayerCharacter: public PhysicsObject {
-private:
+public:
     constexpr static float BASE_MOVE_SPEED = 250.0f;
     constexpr static Vector2 BASE_SIZE = {100.0f, 150.0f};
 
