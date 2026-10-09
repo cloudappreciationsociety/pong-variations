@@ -2,6 +2,8 @@
 #define OBJECT_H
 
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <string>
 
 #include "raylib.h"
@@ -28,16 +30,28 @@ public: // Fields
     bool shouldDelete = false;
 
 public: // Methods
+    // Returns a map of all currently active objects
+    // std::map over std::unordered_map to guarantee rendering order so BG renders
+    // behind everything else
+    static std::map<uint32_t, std::unique_ptr<Object>>& registry();
+
+    template<typename T>
+    static T* create(T* object) {
+        auto ptr = std::unique_ptr<T>(object);
+        T* outPtr = ptr.get();
+        Object::registry().emplace(ptr->id, std::move(ptr));
+        return outPtr;
+    }
+
     Object(const std::string& texturePath);
     virtual ~Object();
 
-    Object(const Object& other);
-
-    // No assignment operator needed
+    // No copy constructor or assignment operator needed
+    Object(const Object& other) = delete;
     Object& operator=(const Object&) = delete;
 
     virtual void update(float deltaTime);
-    void render(void) const;
+    virtual void render(void) const;
     void markForDeletion(void);
 };
 
@@ -77,12 +91,48 @@ public:
 
 class Puck: public PhysicsObject {
 public:
+    uint32_t points = 1;
+
+public:
     Puck(const std::string& texturePath);
 
     bool isCollidingWithMapBoundsY(void) const;
     void
     onCollideWithPlayer(const PlayerCharacter& player, PhysicsObject::CollisionResult collision);
-    void onCollideWithMapBounds();
+    void onCollideWithMapBounds(void);
+    virtual void onScore(void);
+};
+
+class ExplosivePuck: public Puck {
+public:
+    class Explosion: public Object {
+    private:
+        float lifetime = 0.25f;
+        float sizeScale = 0.15f;
+        Vector2 baseSize = {0};
+        float alpha = 255.0f / 2;
+
+    public:
+        Explosion(Vector2 position, float radius);
+
+        void update(float deltaTime) override;
+    };
+
+public:
+    float fuseTime = 5.0f;
+    float explosionRadius = 300.0f;
+    float explosionVelocityMultiplier = 1.5f;
+    uint32_t points = 2;
+
+private:
+    void explode(void);
+
+public:
+    ExplosivePuck(const std::string& texturePath);
+
+    void update(float deltaTime) override;
+    void render(void) const override;
+    void onScore(void) override;
 };
 
 #endif

@@ -4,8 +4,14 @@
 
 #include "constants.h"
 #include "lib.h"
+#include "ui.h"
 
 uint32_t Object::idCounter = 0;
+
+std::map<uint32_t, std::unique_ptr<Object>>& Object::registry() {
+    static std::map<uint32_t, std::unique_ptr<Object>> registry;
+    return registry;
+}
 
 Object::Object(const std::string& texturePath) :
     position(constants::SCREEN_CENTER),
@@ -22,18 +28,6 @@ Object::Object(const std::string& texturePath) :
 
 Object::~Object() {
     UnloadTexture(this->texture);
-}
-
-Object::Object(const Object& other) : Object(other.texturePath) {
-    this->position = other.position;
-    this->size = other.size;
-    this->rotation = other.rotation;
-    this->tint = other.tint;
-
-    this->uvOrigin = other.uvOrigin;
-    this->uvSize = other.uvSize;
-
-    this->shouldRender = other.shouldRender;
 }
 
 void Object::render(void) const {
@@ -139,4 +133,95 @@ void Puck::onCollideWithPlayer(
 void Puck::onCollideWithMapBounds() {
     bool hitTop = this->position.y <= constants::MAP_RECT.y + this->size.y / 2.0f;
     this->velocity.y = (hitTop ? 1.0f : -1.0f) * std::fabs(this->velocity.y);
+}
+
+void Puck::onScore(void) {
+    this->markForDeletion();
+}
+
+// ExplosivePuck implementation
+
+ExplosivePuck::Explosion::Explosion(Vector2 position, float radius) :
+    Object("assets/textures/explosion.png") {
+    this->position = position;
+
+    this->baseSize = {radius * 2, radius * 2};
+    this->size = {this->baseSize.x * this->sizeScale, this->baseSize.y * this->sizeScale};
+}
+
+void ExplosivePuck::Explosion::update(float deltaTime) {
+    this->lifetime = std::max(0.0f, this->lifetime - deltaTime);
+
+    this->size = {this->baseSize.x * this->sizeScale, this->baseSize.y * this->sizeScale};
+    this->sizeScale = std::min(1.0f, this->sizeScale + 6.0f * deltaTime);
+
+    this->tint.a = static_cast<unsigned char>(this->alpha);
+    this->alpha = std::max(0.0f, this->alpha - 255 * deltaTime);
+
+    if (this->lifetime == 0.0f) {
+        this->markForDeletion();
+    }
+}
+
+ExplosivePuck::ExplosivePuck(const std::string& texturePath) : Puck(texturePath) {}
+
+void ExplosivePuck::explode(void) {
+    for (auto& pair : Object::registry()) {
+        auto object = pair.second.get();
+
+        float dx = object->position.x - this->position.x;
+        float dy = object->position.y - this->position.y;
+        float distanceSquared = dx * dx + dy * dy;
+
+        // Outside of explosion radius
+        if (distanceSquared > this->explosionRadius * this->explosionRadius) {
+            continue;
+        }
+
+        if (Puck* puck = dynamic_cast<Puck*>(object)) {
+            float speed = std::sqrt(
+                puck->velocity.x * puck->velocity.x + puck->velocity.y * puck->velocity.y
+            );
+
+            float angle = std::atan2(
+                puck->position.y - this->position.y,
+                puck->position.x - this->position.x
+            );
+
+            puck->velocity.x = speed * this->explosionVelocityMultiplier * std::cos(angle);
+            puck->velocity.y = speed * this->explosionVelocityMultiplier * std::sin(angle);
+        }
+    }
+
+    Object::create(new Explosion(this->position, this->explosionRadius));
+
+    this->markForDeletion();
+}
+
+void ExplosivePuck::update(float deltaTime) {
+    this->fuseTime = std::max(0.0f, this->fuseTime - deltaTime);
+
+    if (this->fuseTime == 0.0f) {
+        this->explode();
+    } else {
+        Puck::update(deltaTime);
+    }
+}
+
+void ExplosivePuck::render(void) const {
+    Puck::render();
+
+    // Draw fuse text
+    drawText(
+        TextFormat("%i", static_cast<int32_t>(std::ceil(this->fuseTime))),
+        {this->position.x, this->position.y + 10.0f},
+        constants::ui::FONT_SIZE,
+        RED
+    );
+}
+
+void ExplosivePuck::onScore(void) {
+    if (this->fuseTime > 0.0f) {
+        this->explode();
+    }
 }

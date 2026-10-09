@@ -22,9 +22,6 @@
 enum class GameConfig { SINGLEPLAYER, MULTIPLAYER };
 enum class GameStatus { IN_MENU, STARTING, IN_PROGRESS, ENDED };
 
-// =============================================================================
-// App-level globals
-// =============================================================================
 AppStatus gAppStatus = AppStatus::RUNNING;
 GameStatus gGameStatus = GameStatus::IN_MENU;
 GameConfig gGameConfig = GameConfig::MULTIPLAYER;
@@ -34,10 +31,6 @@ float gRoundStartTime = 0.0f;
 float gRoundElapsedTime = 0.0f;
 
 Color gBackgroundColor = BLACK;
-
-// std::map over std::unordered_map to guarantee rendering order so BG renders
-// behind everything else
-std::map<uint32_t, std::unique_ptr<Object>> gObjects;
 
 PlayerCharacter* gRedPlayer = nullptr;
 PlayerCharacter* gBluePlayer = nullptr;
@@ -54,6 +47,7 @@ Object* gPuckCountBgIcon = nullptr;
 Music gMenuMusic;
 Music gRoundMusic;
 Sound gHitSound;
+Sound gExplosionSound;
 
 float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
 int32_t gRedScore = 0;
@@ -71,8 +65,16 @@ TextButton gPlayButton;
 TextButton gQuitButton;
 
 void spawnPuck(void) {
-    auto puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
-    puck->size = {50.0f, 50.0f};
+    std::unique_ptr<Puck> puck;
+    // Only spawn explosive pucks when there's more than one puck in play
+    if (gCurrentPuckCount > 1 && puck_rng(generator) < 0.25f) {
+        puck =
+            std::unique_ptr<ExplosivePuck>(new ExplosivePuck("assets/textures/explosive-puck.png"));
+        puck->size = {75.0f, 75.0f};
+    } else {
+        puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
+        puck->size = {50.0f, 50.0f};
+    }
 
     float speed = (450.0f * puck_rng(generator)) + 450.0f;
 
@@ -80,7 +82,7 @@ void spawnPuck(void) {
         constants::MAP_RECT.y + (constants::MAP_RECT.height / 2.0f * puck_rng(generator));
 
     float angle = (120.0f * puck_rng(generator) - 60.0f) * PI / 180.0f;
-    if (puck_rng(generator) > 0.5f) {
+    if (puck_rng(generator) < 0.5f) {
         angle += PI;
     }
 
@@ -88,7 +90,7 @@ void spawnPuck(void) {
     puck->velocity.x = speed * std::cos(angle);
     puck->velocity.y = speed * std::sin(angle);
 
-    gObjects.emplace(puck->id, std::move(puck));
+    Object::registry().emplace(puck->id, std::move(puck));
     ++gCurrentPuckCount;
 }
 
@@ -126,13 +128,15 @@ void resetGame(void) {
 
     // Delete all pucks
     if (gCurrentPuckCount > 0) {
-        for (auto& pair : gObjects) {
-            Puck* puck = dynamic_cast<Puck*>(pair.second.get());
-            if (!puck) {
-                continue;
+        for (auto& pair : Object::registry()) {
+            auto object = pair.second.get();
+            if (Puck* p = dynamic_cast<Puck*>(object)) {
+                p->markForDeletion();
+            } else if (
+                ExplosivePuck::Explosion* e = dynamic_cast<ExplosivePuck::Explosion*>(object)
+            ) {
+                e->markForDeletion();
             }
-
-            puck->markForDeletion();
         }
 
         gCurrentPuckCount = 0;
@@ -151,16 +155,16 @@ void initialize(void) {
     do { \
         auto ptr = std::unique_ptr<className>(new (className)((texturePath))); \
         (gVar) = ptr.get(); \
-        gObjects.emplace((gVar)->id, std::move(ptr)); \
+        Object::registry().emplace((gVar)->id, std::move(ptr)); \
     } while (0)
 
-    INIT_OBJECT(Object, gRinkBg, "assets/textures/rink.png");
-    INIT_OBJECT(Object, gAiIcon, "assets/textures/ai.png");
-    INIT_OBJECT(Object, gPuckCountBgIcon, "assets/textures/puck.png");
-    INIT_OBJECT(PlayerCharacter, gRedPlayer, "assets/textures/red-player.png");
-    INIT_OBJECT(PlayerCharacter, gBluePlayer, "assets/textures/blue-player.png");
-    INIT_OBJECT(Object, gMenuBg, "assets/textures/menu-bg.jpg");
-    INIT_OBJECT(Object, gLogo, "assets/textures/logo.png");
+    gRinkBg = Object::create(new Object("assets/textures/rink.png"));
+    gAiIcon = Object::create(new Object("assets/textures/ai.png"));
+    gPuckCountBgIcon = Object::create(new Object("assets/textures/puck.png"));
+    gRedPlayer = Object::create(new PlayerCharacter("assets/textures/red-player.png"));
+    gBluePlayer = Object::create(new PlayerCharacter("assets/textures/blue-player.png"));
+    gMenuBg = Object::create(new Object("assets/textures/menu-bg.jpg"));
+    gLogo = Object::create(new Object("assets/textures/logo.png"));
 
 #undef INIT_OBJECT
 
@@ -187,12 +191,13 @@ void initialize(void) {
 
     // Audio
     gMenuMusic = LoadMusicStream("assets/audio/fat-lip.mp3");
-    SetMusicVolume(gMenuMusic, 0.33f);
+    SetMusicVolume(gMenuMusic, 0.2f);
 
     gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
-    SetMusicVolume(gRoundMusic, 0.33f);
+    SetMusicVolume(gRoundMusic, 0.25f);
 
     gHitSound = LoadSound("assets/audio/hit1.wav");
+    gExplosionSound = LoadSound("assets/audio/explosion.mp3");
 
     // UI elements
     gBackToMenuButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
@@ -331,12 +336,12 @@ void updateGameInProgress(float deltaTime) {
         spawnPuck();
     }
 
-    for (auto& pair : gObjects) {
+    for (auto& pair : Object::registry()) {
         pair.second->update(deltaTime);
     }
 
     // Collisions
-    for (auto& pair : gObjects) {
+    for (auto& pair : Object::registry()) {
         Puck* puck = dynamic_cast<Puck*>(pair.second.get());
         if (!puck) {
             continue;
@@ -344,14 +349,12 @@ void updateGameInProgress(float deltaTime) {
 
         // Score!
         if (puck->position.x <= constants::RED_GOAL_X) {
-            ++gBlueScore;
-            puck->markForDeletion();
-            --gCurrentPuckCount;
+            gBlueScore += puck->points;
+            puck->onScore();
             continue;
         } else if (puck->position.x >= constants::BLUE_GOAL_X) {
-            ++gRedScore;
-            puck->markForDeletion();
-            --gCurrentPuckCount;
+            gRedScore += puck->points;
+            puck->onScore();
             continue;
         }
 
@@ -393,9 +396,14 @@ void update(void) {
 
     // Delete objects marked for deletion
     // Ugly C++11 iterate-and-erase stuff
-    for (auto it = gObjects.begin(); it != gObjects.end();) {
+    for (auto it = Object::registry().begin(); it != Object::registry().end();) {
         if (it->second->shouldDelete) {
-            it = gObjects.erase(it);
+            // Deleting a puck
+            if (Puck* puck = dynamic_cast<Puck*>(it->second.get())) {
+                --gCurrentPuckCount;
+            }
+
+            it = Object::registry().erase(it);
         } else {
             ++it;
         }
@@ -449,7 +457,7 @@ void render(void) {
 
     ClearBackground(gBackgroundColor);
 
-    for (const auto& pair : gObjects) {
+    for (const auto& pair : Object::registry()) {
         if (!pair.second->shouldRender) {
             continue;
         }
@@ -539,7 +547,7 @@ void render(void) {
 }
 
 void shutdown(void) {
-    gObjects.clear();
+    Object::registry().clear();
 
     UnloadSound(gHitSound);
     UnloadMusicStream(gRoundMusic);

@@ -29,7 +29,7 @@ constexpr Rectangle MAP_RECT = {
     SCREEN_HEIGHT - MAP_Y_TOP_PADDING - MAP_Y_BOTTOM_PADDING
 };
 
-constexpr static float ROUND_MAX_TIME_SEC = 30.0f;
+constexpr static float ROUND_MAX_TIME_SEC = 90.0f;
 constexpr static float ROUND_COUNTDOWN_SEC = 3.0f;
 
 // Where the players are positioned and what x-coordinate a puck needs to cross
