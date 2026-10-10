@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 
+#include "audio.h"
 #include "raylib.h"
 
 class Object {
@@ -113,7 +114,7 @@ public:
         float alpha = 255.0f / 2;
 
     public:
-        Explosion(Vector2 position, float radius);
+        Explosion(Vector2 position, float radius, Audio& audio);
 
         void update(float deltaTime) override;
     };
@@ -124,11 +125,13 @@ public:
     float explosionVelocityMultiplier = 1.5f;
     uint32_t points = 2;
 
+    Audio* audio; // Passed to Explosion to play explosion SFX
+
 private:
     void explode(void);
 
 public:
-    ExplosivePuck(const std::string& texturePath);
+    ExplosivePuck(const std::string& texturePath, Audio& audio);
 
     void update(float deltaTime) override;
     void render(void) const override;

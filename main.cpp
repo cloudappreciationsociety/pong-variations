@@ -12,8 +12,8 @@
 #include <map>
 #include <memory>
 #include <random>
-#include <vector>
 
+#include "audio.h"
 #include "constants.h"
 #include "lib.h"
 #include "object.h"
@@ -44,10 +44,7 @@ Object* gAiIcon = nullptr;
 // Displayed next to round timer
 Object* gPuckCountBgIcon = nullptr;
 
-Music gMenuMusic;
-Music gRoundMusic;
-Sound gHitSound;
-Sound gExplosionSound;
+std::unique_ptr<Audio> gAudio;
 
 float gRoundCountdown = constants::ROUND_COUNTDOWN_SEC;
 int32_t gRedScore = 0;
@@ -68,8 +65,9 @@ void spawnPuck(void) {
     std::unique_ptr<Puck> puck;
     // Only spawn explosive pucks when there's more than one puck in play
     if (gCurrentPuckCount > 1 && puck_rng(generator) < 0.25f) {
-        puck =
-            std::unique_ptr<ExplosivePuck>(new ExplosivePuck("assets/textures/explosive-puck.png"));
+        puck = std::unique_ptr<ExplosivePuck>(
+            new ExplosivePuck("assets/textures/explosive-puck.png", *gAudio.get())
+        );
         puck->size = {75.0f, 75.0f};
     } else {
         puck = std::unique_ptr<Puck>(new Puck("assets/textures/puck.png"));
@@ -145,18 +143,9 @@ void resetGame(void) {
 
 void initialize(void) {
     InitWindow(constants::SCREEN_WIDTH, constants::SCREEN_HEIGHT, "Pong");
-    InitAudioDevice();
+    gAudio.reset(new Audio());
 
     SetTargetFPS(constants::TARGET_FPS);
-
-// Handy macro to initialize the unique pointer, link a global variable to it,
-// and add the pointer to the global object list
-#define INIT_OBJECT(className, gVar, texturePath) \
-    do { \
-        auto ptr = std::unique_ptr<className>(new (className)((texturePath))); \
-        (gVar) = ptr.get(); \
-        Object::registry().emplace((gVar)->id, std::move(ptr)); \
-    } while (0)
 
     gRinkBg = Object::create(new Object("assets/textures/rink.png"));
     gAiIcon = Object::create(new Object("assets/textures/ai.png"));
@@ -165,8 +154,6 @@ void initialize(void) {
     gBluePlayer = Object::create(new PlayerCharacter("assets/textures/blue-player.png"));
     gMenuBg = Object::create(new Object("assets/textures/menu-bg.jpg"));
     gLogo = Object::create(new Object("assets/textures/logo.png"));
-
-#undef INIT_OBJECT
 
     // Backgrounds
     gRinkBg->position.y = constants::SCREEN_CENTER.y + constants::MAP_RECT.y / 2.0f;
@@ -190,14 +177,11 @@ void initialize(void) {
     resetGame();
 
     // Audio
-    gMenuMusic = LoadMusicStream("assets/audio/fat-lip.mp3");
-    SetMusicVolume(gMenuMusic, 0.2f);
+    gAudio->loadMusic(Audio::MusicId::MENU, "assets/audio/fat-lip.mp3", 0.2f);
+    gAudio->loadMusic(Audio::MusicId::GAME, "assets/audio/i-hear-you-calling.mp3", 0.25f);
 
-    gRoundMusic = LoadMusicStream("assets/audio/i-hear-you-calling.mp3");
-    SetMusicVolume(gRoundMusic, 0.25f);
-
-    gHitSound = LoadSound("assets/audio/hit1.wav");
-    gExplosionSound = LoadSound("assets/audio/explosion.mp3");
+    gAudio->loadSound(Audio::SoundId::HIT, "assets/audio/hit1.wav");
+    gAudio->loadSound(Audio::SoundId::EXPLOSION, "assets/audio/explosion.mp3");
 
     // UI elements
     gBackToMenuButton.position = {constants::SCREEN_CENTER.x, 1.35f * constants::SCREEN_CENTER.y};
@@ -302,28 +286,20 @@ void processInput(void) {
 }
 
 void updateGameMenu(void) {
-    if (!IsMusicStreamPlaying(gMenuMusic)) {
-        PlayMusicStream(gMenuMusic);
-    }
-
-    UpdateMusicStream(gMenuMusic);
+    gAudio->playMusic(Audio::MusicId::MENU);
 }
 
 void updateGameStarting(float deltaTime) {
-    StopMusicStream(gMenuMusic);
+    gAudio->stopMusic(Audio::MusicId::MENU);
 
     gRoundCountdown = std::max(0.0f, gRoundCountdown - deltaTime);
 
-    if (!IsMusicStreamPlaying(gRoundMusic)) {
-        PlayMusicStream(gRoundMusic);
-    }
+    gAudio->playMusic(Audio::MusicId::GAME);
 
     if (gRoundCountdown == 0.0f) {
         gGameStatus = GameStatus::IN_PROGRESS;
         gRoundStartTime = static_cast<float>(GetTime());
     }
-
-    UpdateMusicStream(gRoundMusic);
 }
 
 void updateGameInProgress(float deltaTime) {
@@ -366,18 +342,16 @@ void updateGameInProgress(float deltaTime) {
 
             if (redResult.collided) {
                 puck->onCollideWithPlayer(*gRedPlayer, redResult);
-                PlaySound(gHitSound);
+                gAudio->playSound(Audio::SoundId::HIT);
             } else if (blueResult.collided) {
                 puck->onCollideWithPlayer(*gBluePlayer, blueResult);
-                PlaySound(gHitSound);
+                gAudio->playSound(Audio::SoundId::HIT);
             }
         }
     }
 
-    UpdateMusicStream(gRoundMusic);
-
     if (gRoundElapsedTime >= constants::ROUND_MAX_TIME_SEC) {
-        StopMusicStream(gRoundMusic);
+        gAudio->stopMusic(Audio::MusicId::GAME);
         gGameStatus = GameStatus::ENDED;
     }
 }
@@ -428,6 +402,8 @@ void update(void) {
         default:
             break;
     }
+
+    gAudio->update();
 }
 
 void renderTintedOverlay(void) {
@@ -549,11 +525,7 @@ void render(void) {
 void shutdown(void) {
     Object::registry().clear();
 
-    UnloadSound(gHitSound);
-    UnloadMusicStream(gRoundMusic);
-    UnloadMusicStream(gMenuMusic);
-
-    CloseAudioDevice();
+    gAudio.reset(); // Destroy gAudio
     CloseWindow();
 }
 

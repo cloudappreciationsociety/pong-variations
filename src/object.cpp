@@ -141,12 +141,14 @@ void Puck::onScore(void) {
 
 // ExplosivePuck implementation
 
-ExplosivePuck::Explosion::Explosion(Vector2 position, float radius) :
+ExplosivePuck::Explosion::Explosion(Vector2 position, float radius, Audio& audio) :
     Object("assets/textures/explosion.png") {
     this->position = position;
 
     this->baseSize = {radius * 2, radius * 2};
     this->size = {this->baseSize.x * this->sizeScale, this->baseSize.y * this->sizeScale};
+
+    audio.playSound(Audio::SoundId::EXPLOSION);
 }
 
 void ExplosivePuck::Explosion::update(float deltaTime) {
@@ -163,7 +165,9 @@ void ExplosivePuck::Explosion::update(float deltaTime) {
     }
 }
 
-ExplosivePuck::ExplosivePuck(const std::string& texturePath) : Puck(texturePath) {}
+ExplosivePuck::ExplosivePuck(const std::string& texturePath, Audio& audio) :
+    Puck(texturePath),
+    audio(&audio) {}
 
 void ExplosivePuck::explode(void) {
     for (auto& pair : Object::registry()) {
@@ -193,7 +197,7 @@ void ExplosivePuck::explode(void) {
         }
     }
 
-    Object::create(new Explosion(this->position, this->explosionRadius));
+    Object::create(new Explosion(this->position, this->explosionRadius, *this->audio));
 
     this->markForDeletion();
 }
